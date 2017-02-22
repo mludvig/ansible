@@ -31,11 +31,15 @@ options:
   name:
     description:
       - Name of the security group.
-    required: true
+    required: false
+  group_id:
+    description:
+      - ID of an already existing security group (e.g. sg-12345678)
+    required: false
   description:
     description:
       - Description of the security group.
-    required: true
+    required: false
   vpc_id:
     description:
       - ID of the VPC to create the group in.
@@ -241,8 +245,9 @@ def get_target_from_rule(module, ec2, rule, name, group, groups, vpc_id):
 def main():
     argument_spec = ec2_argument_spec()
     argument_spec.update(dict(
-        name=dict(type='str', required=True),
-        description=dict(type='str', required=True),
+        name=dict(type='str'),
+        group_id=dict(type='str'),
+        description=dict(type='str'),
         vpc_id=dict(type='str'),
         rules=dict(type='list'),
         rules_egress=dict(type='list'),
@@ -261,6 +266,7 @@ def main():
         module.fail_json(msg='boto required for this module')
 
     name = module.params['name']
+    group_id = module.params['group_id']
     description = module.params['description']
     vpc_id = module.params['vpc_id']
     rules = module.params['rules']
@@ -268,6 +274,9 @@ def main():
     state = module.params.get('state')
     purge_rules = module.params['purge_rules']
     purge_rules_egress = module.params['purge_rules_egress']
+
+    if not name and not group_id:
+        module.fail_json(msg='Either [name] or [group_id] parameter must be set.')
 
     changed = False
 
@@ -285,8 +294,12 @@ def main():
         else:
             groups[curGroup.name] = curGroup
 
-        if curGroup.name == name and (vpc_id is None or curGroup.vpc_id == vpc_id):
+        if (curGroup.name == name and (vpc_id is None or curGroup.vpc_id == vpc_id)) or curGroup.id == group_id:
             group = curGroup
+
+    # Set group Name if only ID was supplied
+    if group and not name:
+        name = group.name
 
     # Ensure requested group is absent
     if state == 'absent':
@@ -321,6 +334,9 @@ def main():
         # if the group doesn't exist, create it now
         else:
             '''no match found, create it'''
+            if not name or not description:
+                module.fail_json(msg='Both [name] and [description] must be set when creating a new group')
+
             if not module.check_mode:
                 group = ec2.create_security_group(name, description, vpc_id=vpc_id)
 
